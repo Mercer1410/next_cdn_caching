@@ -46,6 +46,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Pull Vercel environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel pull --yes --environment=production --token=$VERCEL_TOKEN
+
       # ── 4. Build Next.js ──────────────────────────────────────
       # CDN_URL is injected so next.config.js sets assetPrefix at build time.
       - name: Build Next.js
@@ -98,7 +103,6 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           CDN_URL: ${{ secrets.CDN_URL }}
         run: |
-          npx vercel --token=$VERCEL_TOKEN \
-            --env CDN_URL=$CDN_URL \
-            ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} \
-            --yes
+          npx vercel pull --yes --token=$VERCEL_TOKEN
+          npx vercel build --prod --token=$VERCEL_TOKEN
+          npx vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
