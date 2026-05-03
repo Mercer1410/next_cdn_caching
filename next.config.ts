@@ -11,6 +11,8 @@ const nextConfig: NextConfig = {
   assetPrefix: CDN_URL || undefined,
   output: 'standalone',
   images: {
+    loader: 'custom',
+    loaderFile: './lib/cdn-loader.ts',
     remotePatterns: CDN_URL
       ? [
           {
