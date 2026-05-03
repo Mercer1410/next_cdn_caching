@@ -1,0 +1,103 @@
+## .github/workflows/deploy.yml
+## -----------------------------------------------------------
+## CI/CD Pipeline
+## 1. Build Next.js app
+## 2. Upload static assets (_next/static/**) to Cloudflare R2
+## 3. Deploy to Vercel (with CDN_URL env so assetPrefix is live)
+## -----------------------------------------------------------
+## Required GitHub Secrets (Settings → Secrets → Actions):
+##
+##   CLOUDFLARE_ACCOUNT_ID   — from Cloudflare dashboard (top-right)
+##   CLOUDFLARE_ACCESS_KEY_ID     — R2 API token (Access Key ID)
+##   CLOUDFLARE_SECRET_ACCESS_KEY — R2 API token (Secret Access Key)
+##   R2_BUCKET_NAME          — your bucket name, e.g. "my-nextjs-assets"
+##   CDN_URL                 — public base URL of the bucket
+##                             e.g. https://<account>.r2.cloudflarestorage.com/<bucket>
+##                             or   https://cdn.yourdomain.com
+##   VERCEL_TOKEN            — from vercel.com/account/tokens
+##   VERCEL_ORG_ID           — from .vercel/project.json after `vercel link`
+##   VERCEL_PROJECT_ID       — from .vercel/project.json after `vercel link`
+
+name: Build, Upload to R2, Deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Setup Node ─────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ── 3. Install deps ───────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── 4. Build Next.js ──────────────────────────────────────
+      # CDN_URL is injected so next.config.js sets assetPrefix at build time.
+      - name: Build Next.js
+        env:
+          CDN_URL: ${{ secrets.CDN_URL }}
+        run: npm run build
+
+      # ── 5. Upload _next/static to Cloudflare R2 ───────────────
+      # Uses the AWS CLI (pre-installed on ubuntu-latest) with R2's
+      # S3-compatible endpoint.  --cache-control ensures browsers
+      # cache immutable chunks for 1 year (Next.js content-hashes filenames).
+      - name: Upload static assets to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          aws s3 sync .next/static s3://$R2_BUCKET_NAME/_next/static \
+            --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --delete
+
+      # ── 6. Upload public/ folder to R2 (optional) ─────────────
+      # Static files in /public (images, fonts, favicon…) can also
+      # be served from R2.  Remove this step if you prefer Vercel to
+      # serve them.
+      - name: Upload public assets to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          if [ -d "public" ]; then
+            aws s3 sync public s3://$R2_BUCKET_NAME \
+              --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+              --cache-control "public, max-age=86400" \
+              --delete
+          fi
+
+      # ── 7. Deploy to Vercel ───────────────────────────────────
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          CDN_URL: ${{ secrets.CDN_URL }}
+        run: |
+          npx vercel --token=$VERCEL_TOKEN \
+            --env CDN_URL=$CDN_URL \
+            ${{ github.ref == 'refs/heads/main' && '--prod' || '' }} \
+            --yes
